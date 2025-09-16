@@ -18,6 +18,10 @@ router.register(r'receitas', views.ReceitaViewSet)
 router.register(r'buscar-pacientes', views.BuscarPacientesViewSet, basename='buscar-pacientes')
 router.register(r'admin/auditoria', views.AuditLogViewSet, basename='admin-auditoria')
 router.register(r'medicos/solicitacoes', views.SolicitacaoMedicoViewSet, basename='solicitacoes-medico')
+# Alias adicional compatível com o frontend (evita conflito com /medicos/<pk>/)
+router.register(r'solicitacoes/medicos', views.SolicitacaoMedicoViewSet, basename='solicitacoes-medico-alias')
+# Alias adicional em singular para compatibilidade direta com .env
+router.register(r'solicitacaomedico', views.SolicitacaoMedicoModelViewSet, basename='solicitacaomedico')
 router.register(r'agendamentos', views.AgendamentoViewSet)
 router.register(r'clinicas', views.ClinicaViewSet)  # <- novo
 router.register(r'secretarias', views.SecretariaViewSet, basename='secretaria')

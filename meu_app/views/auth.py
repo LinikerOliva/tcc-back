@@ -5,7 +5,7 @@ from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
 from django.conf import settings
 from django.utils.crypto import get_random_string
-from ..models import User, Paciente
+from ..models import User, Paciente, Medico
 
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
@@ -14,6 +14,11 @@ def register_view(request):
     serializer = UserSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
+        # Cria perfil de médico pendente, caso role seja 'medico'
+        role_in = (serializer.validated_data.get('role') or request.data.get('role') or '').lower()
+        if role_in == 'medico':
+            crm = request.data.get('crm') or ''
+            Medico.objects.get_or_create(user=user, defaults={'crm': crm, 'status': 'pendente'})
         token, _ = Token.objects.get_or_create(user=user)
         return Response({
             'user': {
@@ -109,7 +114,7 @@ def google_login_view(request):
             'detail': 'Envie também o campo "cpf" no formato XXX.XXX.XXX-XX'
         }, status=status.HTTP_400_BAD_REQUEST)
 
-    role = request.data.get('role', 'paciente')
+    role = (request.data.get('role') or 'paciente').lower()
 
     base_username = (email.split('@')[0] or f'user_{sub}')[:20]
     candidate = base_username
@@ -133,6 +138,9 @@ def google_login_view(request):
         return Response({'error': 'Falha ao criar usuário', 'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     if role == 'paciente':
         Paciente.objects.get_or_create(user=user)
+    elif role == 'medico':
+        crm = request.data.get('crm') or ''
+        Medico.objects.get_or_create(user=user, defaults={'crm': crm, 'status': 'pendente'})
     token, _ = Token.objects.get_or_create(user=user)
     return Response({
         'user': {

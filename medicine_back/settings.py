@@ -163,7 +163,7 @@ REST_FRAMEWORK = {
 }
 
 # Allowed Hosts
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '26.138.118.61']
 
 # ID do Cliente OAuth do Google (use variável de ambiente em produção)
 GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', 'COLE_SEU_CLIENT_ID_AQUI')

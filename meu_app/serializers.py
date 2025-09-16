@@ -119,6 +119,8 @@ class ConsultaSerializer(serializers.ModelSerializer):
 # Região mais abaixo do arquivo - classes: TipoExameSerializer, ExameSerializer
 class ProntuarioSerializer(serializers.ModelSerializer):
     consulta = ConsultaSerializer(read_only=True)
+    # Permitir criação via consulta_id (write-only), mapeando para o campo consulta
+    consulta_id = serializers.PrimaryKeyRelatedField(queryset=Consulta.objects.all(), write_only=True, source='consulta')
     
     class Meta:
         model = Prontuario
@@ -142,6 +144,8 @@ class ExameSerializer(serializers.ModelSerializer):
 class ReceitaSerializer(serializers.ModelSerializer):
     consulta = ConsultaSerializer(read_only=True)
     itens = serializers.SerializerMethodField(read_only=True)
+    # Permitir criação via consulta_id (write-only), mapeando para o campo consulta
+    consulta_id = serializers.PrimaryKeyRelatedField(queryset=Consulta.objects.all(), write_only=True, source='consulta')
     
     class Meta:
         model = Receita
@@ -261,8 +265,15 @@ class SolicitacaoMedicoSerializer(serializers.ModelSerializer):
     # Campos calculados para o Admin do front
     nome = serializers.SerializerMethodField(read_only=True)
     email = serializers.SerializerMethodField(read_only=True)
-    tipo = serializers.SerializerMethodField(read_only=True)  # sempre "medico"
+    tipo = serializers.SerializerMethodField(read_only=True)  # sempre 'medico'
     dataEnvio = serializers.DateTimeField(source='created_at', read_only=True)
+
+    # Novos campos de auditoria de aprovação/rejeição (somente leitura)
+    approved_by = serializers.SerializerMethodField(read_only=True)
+    approved_at = serializers.DateTimeField(read_only=True)
+    rejected_by = serializers.SerializerMethodField(read_only=True)
+    rejected_at = serializers.DateTimeField(read_only=True)
+    rejection_reason = serializers.CharField(read_only=True)
 
     class Meta:
         model = SolicitacaoMedico
@@ -273,8 +284,11 @@ class SolicitacaoMedicoSerializer(serializers.ModelSerializer):
             'experiencia', 'motivacao',
             'diploma_medicina', 'certificado_residencia', 'comprovante_experiencia',
             'status', 'dataEnvio',
+            'approved_by', 'approved_at', 'rejected_by', 'rejected_at', 'rejection_reason',
         ]
-        read_only_fields = ['status', 'dataEnvio']
+        read_only_fields = [
+            'status', 'dataEnvio', 'approved_by', 'approved_at', 'rejected_by', 'rejected_at', 'rejection_reason'
+        ]
 
     def get_tipo(self, obj):
         return 'medico'
@@ -284,6 +298,16 @@ class SolicitacaoMedicoSerializer(serializers.ModelSerializer):
 
     def get_email(self, obj):
         return obj.user.email
+
+    def get_approved_by(self, obj):
+        if getattr(obj, 'approved_by', None):
+            return obj.approved_by.get_full_name() or obj.approved_by.username
+        return None
+
+    def get_rejected_by(self, obj):
+        if getattr(obj, 'rejected_by', None):
+            return obj.rejected_by.get_full_name() or obj.rejected_by.username
+        return None
 
     def create(self, validated_data):
         """

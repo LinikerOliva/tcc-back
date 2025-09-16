@@ -78,6 +78,13 @@ class Medico(models.Model):
     valor_consulta = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     ativo = models.BooleanField(default=True)
     clinicas = models.ManyToManyField('Clinica', related_name='medicos', blank=True)
+    # --- NOVO: status de aprovação do médico ---
+    STATUS_CHOICES = [
+        ('pendente', 'Pendente'),
+        ('aprovado', 'Aprovado'),
+        ('reprovado', 'Reprovado'),
+    ]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pendente')
 
     class Meta:
         verbose_name = "Médico"
@@ -158,12 +165,9 @@ class Consulta(models.Model):
     STATUS_CHOICES = [
         ('agendada', 'Agendada'),
         ('confirmada', 'Confirmada'),
-        ('em_andamento', 'Em Andamento'),
-        ('concluida', 'Concluída'),
         ('cancelada', 'Cancelada'),
-        ('faltou', 'Paciente Faltou'),
+        ('concluida', 'Concluída'),
     ]
-    
     TIPO_CHOICES = [
         ('primeira_consulta', 'Primeira Consulta'),
         ('retorno', 'Retorno'),
@@ -483,6 +487,20 @@ class SolicitacaoMedico(models.Model):
     comprovante_experiencia = models.FileField(upload_to='solicitacoes/experiencia/', blank=True, null=True)
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    # Novos campos para auditoria de aprovação/rejeição
+    approved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='solicitacoes_medico_aprovadas'
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='solicitacoes_medico_rejeitadas'
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
