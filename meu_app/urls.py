@@ -2,6 +2,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views  # manter para endpoints que ainda não foram divididos
+from .views.receitas import assinar_documento
 
 auth_views = views
 clinica_views = views
@@ -52,4 +53,7 @@ urlpatterns = [
     path('admin/solicitacoes/<uuid:pk>/', solicitacoes_views.admin_solicitacao_detail, name='admin-solicitacao-detail'),
     path('admin/solicitacoes/<uuid:pk>/aprovar/', solicitacoes_views.admin_solicitacao_aprovar, name='admin-solicitacao-aprovar'),
     path('admin/solicitacoes/<uuid:pk>/rejeitar/', solicitacoes_views.admin_solicitacao_rejeitar, name='admin-solicitacao-rejeitar'),
+
+    # --- ENDPOINTS DE ASSINATURA ---
+    path('assinatura/assinar/', assinar_documento, name='assinatura-assinar'),
 ]

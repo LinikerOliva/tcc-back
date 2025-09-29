@@ -330,9 +330,11 @@ class Receita(models.Model):
     hash_documento = models.CharField(max_length=128, blank=True)
     algoritmo_assinatura = models.CharField(max_length=50, blank=True)
     carimbo_tempo = models.CharField(max_length=256, blank=True)
-    assinada_por = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, blank=True, related_name='receitas_assinadas')
+    assinada_por = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='receitas_assinadas')
     assinada_em = models.DateTimeField(null=True, blank=True)
     arquivo_assinado = models.FileField(upload_to='assinaturas/receitas/', null=True, blank=True)
+    # NOVO: status booleano de assinatura
+    assinada = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "Receita"
