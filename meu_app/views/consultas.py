@@ -108,18 +108,9 @@ class ConsultaViewSet(viewsets.ModelViewSet):
         consulta.save()
         return Response({'status': 'Consulta iniciada'})
 
-    @action(detail=True, methods=['post'])
-    def finalizar(self, request, pk=None):
-        """Finaliza uma consulta"""
-        consulta = self.get_object()
-        consulta.status = 'concluida'
-        consulta.save()
-        return Response({'status': 'Consulta finalizada'})
-
-    @action(detail=True, methods=['post'])
-    def sumarizar(self, request, pk=None):
-        """
-        Recebe a transcrição do diálogo, processa via Gemini e retorna JSON estruturado.
+    @action(detail=True, methods=['post'], url_path='finalizar-ia')
+    def finalizar_ia(self, request, pk=None):
+        """Finaliza a consulta e retorna preenchimento sugerido pela IA.
         Espera payload: {
           transcript: string,
           extracted?: object,
@@ -127,15 +118,17 @@ class ConsultaViewSet(viewsets.ModelViewSet):
         }
         """
         consulta = self.get_object()
+        consulta.status = 'concluida'
+        consulta.save()
+
         data = request.data or {}
         transcript = (data.get('transcript') or '').strip()
         extracted = data.get('extracted') or {}
         form = data.get('form') or {}
 
-        # Resposta rápida se não houver transcrição
         if not transcript:
-            # Retorna dados do contexto como está (evita erro no front)
             out = {
+                'status': 'concluida',
                 'queixa': extracted.get('queixa') or form.get('queixa_principal') or '',
                 'historia_doenca_atual': extracted.get('historia') or form.get('historia_doenca_atual') or '',
                 'diagnostico_principal': extracted.get('diagnostico') or form.get('diagnostico_principal') or '',
@@ -159,8 +152,8 @@ class ConsultaViewSet(viewsets.ModelViewSet):
         }
 
         if ai_gemini is None:
-            # SDK indisponível: apenas ecoa contexto mínimo
             out = {
+                'status': 'concluida',
                 'queixa': extracted.get('queixa') or form.get('queixa_principal') or '',
                 'historia_doenca_atual': extracted.get('historia') or form.get('historia_doenca_atual') or '',
                 'diagnostico_principal': extracted.get('diagnostico') or form.get('diagnostico_principal') or '',
@@ -179,8 +172,8 @@ class ConsultaViewSet(viewsets.ModelViewSet):
         try:
             result = ai_gemini.summarize_transcript(transcript, contexto)
         except Exception as e:
-            # Fallback resiliente com contexto mínimo
             out = {
+                'status': 'concluida',
                 'queixa': extracted.get('queixa') or form.get('queixa_principal') or '',
                 'historia_doenca_atual': extracted.get('historia') or form.get('historia_doenca_atual') or '',
                 'diagnostico_principal': extracted.get('diagnostico') or form.get('diagnostico_principal') or '',
@@ -196,7 +189,6 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             }
             return Response(out, status=status.HTTP_200_OK)
 
-        # Normaliza o resultado para garantir chaves esperadas
         def g(obj, keys, default=""):
             for k in keys:
                 if isinstance(obj, dict) and k in obj and obj[k] is not None:
@@ -204,6 +196,7 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             return default
 
         normalized = {
+            'status': 'concluida',
             'queixa': g(result, ['queixa', 'queixa_principal', 'chief_complaint', 'chiefComplaint']),
             'historia_doenca_atual': g(result, ['historia_doenca_atual', 'historia', 'hda', 'history_of_present_illness', 'hpi']),
             'diagnostico_principal': g(result, ['diagnostico_principal', 'diagnostico', 'diagnosis', 'assessment']),

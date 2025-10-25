@@ -383,11 +383,78 @@ class ConsultaCreateSerializer(serializers.ModelSerializer):
             'retorno': 'retorno',
             'urgencia': 'urgencia',
             'rotina': 'rotina',
+            # adicionais comuns no front
+            'consulta': 'rotina',
+            'geral': 'rotina',
+            'consulta_geral': 'rotina',
         }
         v = (value or '').strip().lower()
         if v not in aliases:
             raise serializers.ValidationError("Tipo inválido. Use: primeira_consulta, retorno, urgencia, rotina.")
         return aliases[v]
+
+    def create(self, validated_data):
+        """
+        Aceita campos alternativos do front (data, hora, modalidade, local) e
+        mapeia para os campos do modelo. Define padrões seguros quando ausentes.
+        """
+        request = self.context.get('request')
+        raw = request.data if request else {}
+
+        # 1) data_hora: aceitar data/hora separados
+        if not validated_data.get('data_hora'):
+            date_str = raw.get('data') or raw.get('date')
+            time_str = raw.get('hora') or raw.get('time')
+            from datetime import datetime
+            dt = None
+            if date_str and time_str:
+                # tenta ISO "YYYY-MM-DD" + "HH:MM"/"HH:MM:SS"
+                for fmt in ["%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"]:
+                    try:
+                        dt = datetime.strptime(f"{date_str} {time_str}", fmt)
+                        break
+                    except Exception:
+                        pass
+            if not dt and raw.get('data_hora'):
+                try:
+                    dt = datetime.fromisoformat(str(raw.get('data_hora')))
+                except Exception:
+                    dt = None
+            if dt:
+                validated_data['data_hora'] = dt
+
+        # 2) paciente: inferir pelo usuário autenticado se não vier
+        if not validated_data.get('paciente') and request and getattr(request, 'user', None):
+            try:
+                paciente = Paciente.objects.filter(user=request.user).first()
+                if paciente:
+                    validated_data['paciente'] = paciente
+            except Exception:
+                pass
+
+        # 3) tipo: aplicar aliases/padrão
+        tipo_in = raw.get('tipo') or validated_data.get('tipo')
+        if tipo_in:
+            validated_data['tipo'] = self.validate_tipo(tipo_in)
+        else:
+            validated_data['tipo'] = 'rotina'
+
+        # 4) duração padrão
+        validated_data.setdefault('duracao_minutos', 30)
+
+        # 5) motivo/observações: aceitar campos alternativos e anexar metadados
+        if not validated_data.get('motivo'):
+            validated_data['motivo'] = raw.get('motivo') or ''
+        obs = validated_data.get('observacoes') or ''
+        extras = []
+        if raw.get('modalidade'):
+            extras.append(f"Modalidade: {raw.get('modalidade')}")
+        if raw.get('local'):
+            extras.append(f"Local: {raw.get('local')}")
+        if extras:
+            validated_data['observacoes'] = (obs + "\n" + "\n".join(extras)).strip() if obs else "\n".join(extras)
+
+        return super().create(validated_data)
 class MedicamentoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Medicamento

@@ -12,9 +12,11 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 import os
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
@@ -170,8 +172,10 @@ GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', 'COLE_SEU_CLIENT_ID
 
 
 # Adicione (ou ajuste) estas linhas
-# ... existing code ...
-
+# URL base do frontend para links de e-mail
+FRONTEND_BASE_URL = os.getenv('FRONTEND_BASE_URL', 'http://localhost:5174')
+# URL base do backend (fallback nos e-mails)
+BACKEND_BASE_URL = os.getenv('BACKEND_BASE_URL', 'http://127.0.0.1:8000')
 # >>> NOVO: Diretórios de upload (assinaturas, certificados, etc.)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
@@ -183,13 +187,16 @@ TWILIO = {
     'FROM_NUMBER': os.getenv('TWILIO_FROM_NUMBER', ''),
 }
 
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# Ajuste: usa console em DEBUG quando EMAIL_BACKEND não for definido via env
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.getenv('EMAIL_HOST', '')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'true').lower() == 'true'
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'no-reply@example.com')
+# Novo: caminho padrão para backend file-based
+EMAIL_FILE_PATH = os.getenv('EMAIL_FILE_PATH', os.path.join(BASE_DIR, 'sent_emails'))
 
 # >>> NOVO: Configurações para MFA/TOTP (apenas placeholders)
 SECURITY = {

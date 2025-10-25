@@ -2,7 +2,8 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views  # manter para endpoints que ainda não foram divididos
-from .views.receitas import assinar_documento
+from .views.receitas import assinar_documento, assinar_receita
+from .views.certificados import ValidateCertificateView
 
 auth_views = views
 clinica_views = views
@@ -47,6 +48,13 @@ urlpatterns = [
     path('auth/mfa/verify/', auth_views.mfa_verify, name='mfa_verify'),
     # Adiciona logout
     path('auth/logout/', auth_views.logout_view, name='logout'),
+    # NOVO: Endpoint de usuário atual
+    path('auth/users/me/', auth_views.current_user_view, name='current-user'),
+    # NOVO: Endpoint REST para reset de senha
+    path('password_reset/', auth_views.password_reset_api, name='password_reset'),
+    # NOVO: Endpoint REST para confirmar reset de senha
+    path('auth/password_reset_confirm/', auth_views.password_reset_confirm_api, name='password_reset_confirm'),
+
     # Stub: endpoint de relatórios/admin/solicitações (lista vazia para não quebrar o frontend)
     path('admin/dashboard/', views.admin_dashboard, name='admin-dashboard'),
     path('admin/solicitacoes/', solicitacoes_views.admin_solicitacoes_list, name='admin-solicitacoes'),
@@ -56,4 +64,8 @@ urlpatterns = [
 
     # --- ENDPOINTS DE ASSINATURA ---
     path('assinatura/assinar/', assinar_documento, name='assinatura-assinar'),
+    path('assinar-receita/', assinar_receita, name='assinar-receita'),
+
+    # --- ENDPOINT DE VALIDAÇÃO DE CERTIFICADO ---
+    path('assinatura/certificado/', ValidateCertificateView.as_view(), name='validar-certificado'),
 ]

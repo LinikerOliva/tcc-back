@@ -11,3 +11,8 @@ google-auth>=2.0.0
 # Adicionados para integração com Gemini
 google-generativeai>=0.6.0
 requests>=2.31.0
+cryptography>=41.0.0
+pyhanko>=0.18.0
+asn1crypto>=1.5.1
+pypdf>=3.8.1
+endesive>=2.14.0

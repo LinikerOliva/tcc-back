@@ -3,9 +3,17 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
+from django.contrib.auth.forms import PasswordResetForm
 from django.conf import settings
 from django.utils.crypto import get_random_string
 from ..models import User, Paciente, Medico
+from pathlib import Path
+import os
+from django.shortcuts import redirect
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_decode
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
@@ -199,3 +207,172 @@ def logout_view(request):
     except Token.DoesNotExist:
         pass
     return Response({"detail": "Logout realizado com sucesso."}, status=status.HTTP_200_OK)
+
+# NOVO: Endpoint para obter o usuário autenticado (/api/auth/users/me/)
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def current_user_view(request):
+    try:
+        from ..serializers import UserSerializer
+    except Exception:
+        return Response({"detail": "Serializer não disponível"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    serializer = UserSerializer(request.user)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+# NOVO: Endpoint REST para envio de e-mail de reset de senha
+
+# Helper: garantir/criar templates de reset com conteúdo definido
+def ensure_password_reset_templates():
+    base_dir = Path(settings.BASE_DIR)
+    reg_dir = base_dir / 'meu_app' / 'templates' / 'registration'
+    reg_dir.mkdir(parents=True, exist_ok=True)
+    subject_path = reg_dir / 'password_reset_subject.txt'
+    email_path = reg_dir / 'password_reset_email.html'
+
+    subject_content = "Redefinição de senha - Minha Plataforma"
+    email_content = """<!doctype html>
+<html lang=\"pt-BR\">
+  <head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"color-scheme\" content=\"light only\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>Redefinição de senha</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #1f2937; line-height: 1.6; }
+      .btn { display: inline-block; background-color: #2563eb; color: #fff; text-decoration: none; padding: 10px 16px; border-radius: 6px; }
+      .muted { color: #6b7280; font-size: 13px; }
+      .container { max-width: 600px; margin: 0 auto; padding: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class=\"container\">
+      <p>Olá,</p>
+      <p>Recebemos uma solicitação para redefinir sua senha na <strong>Minha Plataforma</strong>.</p>
+      <p>Para continuar com segurança, clique no botão abaixo:</p>
+      <p>
+        <a href=\"{{ frontend_base }}/redefinir-senha/{{ uid }}/{{ token }}\" style=\"display:inline-block;background-color:#2563eb;color:#ffffff !important;text-decoration:none;padding:10px 16px;border-radius:6px;\">Redefinir minha senha</a>
+      </p>
+      <p>Se preferir, copie e cole o link no navegador:</p>
+      <p><a href=\"{{ frontend_base }}/redefinir-senha/{{ uid }}/{{ token }}\" style=\"color:#2563eb;text-decoration:underline;\">{{ frontend_base }}/redefinir-senha/{{ uid }}/{{ token }}</a></p>
+
+      <p class=\"muted\">Se você não solicitou esta alteração, ignore este e‑mail. Não é necessária nenhuma ação.</p>
+      <p class=\"muted\">Por segurança, este link expira em breve. Caso expire, solicite uma nova redefinição.</p>
+      <p class=\"muted\">Atenciosamente,<br/>Equipe Minha Plataforma</p>
+    </div>
+  </body>
+</html>
+"""
+
+    try:
+        if not subject_path.exists() or subject_path.read_text(encoding="utf-8") != subject_content:
+            subject_path.write_text(subject_content, encoding="utf-8")
+        if not email_path.exists() or email_path.read_text(encoding="utf-8") != email_content:
+            email_path.write_text(email_content, encoding="utf-8")
+    except Exception as e:
+        print(f"DEBUG: não foi possível garantir templates: {e}")
+
+# Helper: imprimir o e-mail no console em ambiente local (DEBUG)
+def print_last_email_to_console_if_debug():
+    if not getattr(settings, 'DEBUG', False):
+        return
+    try:
+        backend = (getattr(settings, 'EMAIL_BACKEND', '') or '').lower()
+        file_dir = getattr(settings, 'EMAIL_FILE_PATH', None)
+        if 'filebased' in backend and file_dir:
+            directory = Path(file_dir)
+            files = sorted(directory.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if files:
+                content = files[0].read_text(encoding="utf-8", errors="ignore")
+                print("=== Password Reset Email (DEBUG) ===")
+                print(content)
+    except Exception as e:
+        print(f"DEBUG: falha ao imprimir email: {e}")
+
+# Remover decoradores indevidos do redirect e manter como view Django simples
+def password_reset_redirect(request, uidb64, token):
+    frontend_base = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:5174').rstrip('/')
+    return redirect(f"{frontend_base}/redefinir-senha/{uidb64}/{token}")
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def password_reset_api(request):
+    email = (request.data.get('email') or '').strip()
+    if not email:
+        return Response({"detail": "Campo 'email' é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Remetente fixo: sempre usar DEFAULT_FROM_EMAIL
+    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+
+    # Bases para links no email (evita NameError)
+    frontend_base = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:5175').rstrip('/')
+    backend_base = getattr(settings, 'BACKEND_BASE_URL', 'http://127.0.0.1:8000').rstrip('/')
+
+    # Garante templates atualizados/criados
+    ensure_password_reset_templates()
+
+    form = PasswordResetForm({'email': email})
+    if not form.is_valid():
+        # Para privacidade, responder 200 mesmo se email não existir (evita enumeração)
+        return Response({"detail": "Se o email existir, enviaremos instruções para redefinir a senha."}, status=status.HTTP_200_OK)
+
+    # Envia e-mail usando templates padrão
+    try:
+        form.save(
+            request=request,
+            use_https=request.is_secure(),
+            from_email=from_email,
+            subject_template_name='registration/password_reset_subject.txt',
+            email_template_name='registration/password_reset_email.txt',
+            html_email_template_name='registration/password_reset_email.html',
+            extra_email_context={
+                'frontend_base': frontend_base,
+                'backend_base': backend_base,
+            }
+        )
+        print_last_email_to_console_if_debug()
+        return Response({"detail": "Email de redefinição enviado."}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"detail": "Falha ao enviar email de redefinição.", "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def password_reset_confirm_api(request):
+    uidb64 = (request.data.get('uid') or request.data.get('uidb64') or '').strip()
+    token = (request.data.get('token') or '').strip()
+    new_password = (request.data.get('new_password') or request.data.get('password') or '').strip()
+
+    if not uidb64 or not token or not new_password:
+        return Response({"detail": "Campos 'uid', 'token' e 'new_password' são obrigatórios."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Decodifica UID e busca usuário
+    try:
+        UserModel = get_user_model()
+        uid = urlsafe_base64_decode(uidb64).decode()
+        user = UserModel.objects.get(pk=uid)
+    except Exception as e:
+        return Response({"detail": "Link inválido.", "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Valida token do Django
+    if not default_token_generator.check_token(user, token):
+        return Response({"detail": "Token inválido ou expirado."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Valida força da senha
+    try:
+        validate_password(new_password, user=user)
+    except Exception as ve:
+        errors = getattr(ve, 'messages', [str(ve)])
+        return Response({"detail": "Senha inválida.", "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Atualiza senha
+    user.set_password(new_password)
+    user.save(update_fields=['password'])
+
+    # Revoga tokens existentes (se houver)
+    try:
+        Token.objects.filter(user=user).delete()
+    except Exception:
+        pass
+
+    return Response({"detail": "Senha redefinida com sucesso."}, status=status.HTTP_200_OK)

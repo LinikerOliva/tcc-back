@@ -180,16 +180,16 @@ def assinar_documento(request):
     # Restrição: somente médicos podem assinar
     user = request.user
     if not (getattr(user, 'role', None) == 'medico' or getattr(user, 'medico', None)):
-        return Response({'detail': 'Apenas médicos podem assinar receitas.'}, status=403)
+        return Response({'status': 'error', 'message': 'Apenas médicos podem assinar receitas.'}, status=403)
 
-    # Arquivo PDF recebido
+    # Arquivo PDF recebido - aceita múltiplos nomes de campo
     up = None
-    for key in ['file', 'documento', 'pdf']:
+    for key in ['file', 'documento', 'pdf', 'arquivo']:
         if key in request.FILES:
             up = request.FILES[key]
             break
     if up is None:
-        return Response({'detail': 'Arquivo PDF não enviado.'}, status=400)
+        return Response({'status': 'error', 'message': 'Arquivo PDF não enviado.'}, status=400)
 
     original_name = getattr(up, 'name', None) or 'documento.pdf'
     base, ext = os.path.splitext(original_name)
@@ -211,31 +211,45 @@ def assinar_documento(request):
     except Exception:
         pass
 
-    # Certificado PFX e senha (obrigatórios)
+    # Certificado PFX e senha (obrigatórios) - aceita múltiplos nomes de campo
     pfx_file = None
-    for key in ['pfx', 'certificado', 'pkcs12']:
+    for key in ['pfx', 'certificado', 'pkcs12', 'arquivo_pfx']:
         if key in request.FILES:
             pfx_file = request.FILES[key]
             break
-    pfx_password = request.data.get('pfx_password') or request.data.get('senha') or request.data.get('password')
+    
+    # Aceita múltiplos nomes para senha
+    pfx_password = (request.data.get('pfx_password') or 
+                   request.data.get('senha') or 
+                   request.data.get('password') or 
+                   request.data.get('senha_certificado'))
+    
     if pfx_file is None:
-        return Response({'detail': 'Certificado digital (.pfx/.p12) é obrigatório.'}, status=400)
+        return Response({'status': 'error', 'message': 'Certificado digital (.pfx/.p12) é obrigatório.'}, status=400)
     if not pfx_password:
-        return Response({'detail': 'Senha do certificado digital é obrigatória.'}, status=400)
+        return Response({'status': 'error', 'message': 'Senha do certificado digital é obrigatória.'}, status=400)
 
-    # Extrair dados do certificado (sujeito, emissor, validade)
+    # Extrair dados do certificado (sujeito, emissor, validade) e validar senha
     cert_subject = None
     cert_issuer = None
     cert_valid_from = None
     cert_valid_to = None
     cert_serial = None
+    cert = None
+    key = None
+    
     try:
         if pkcs12:
             p12_bytes = pfx_file.read()
-            # Não persistir senha; usar apenas para carregar e assinar
-            loaded = pkcs12.load_key_and_certificates(p12_bytes, pfx_password.encode('utf-8'))
-            cert = loaded[1]
-            if cert:
+            # Validar senha do certificado
+            try:
+                loaded = pkcs12.load_key_and_certificates(p12_bytes, pfx_password.encode('utf-8'))
+                key, cert, chain = loaded
+                
+                if cert is None or key is None:
+                    return Response({'status': 'error', 'message': 'Certificado ou chave privada não encontrados no arquivo PFX.'}, status=400)
+                
+                # Extrair informações do certificado
                 cert_subject = cert.subject.rfc4514_string()
                 cert_issuer = cert.issuer.rfc4514_string()
                 try:
@@ -245,14 +259,27 @@ def assinar_documento(request):
                     cert_valid_from = getattr(cert, 'not_valid_before', None)
                     cert_valid_to = getattr(cert, 'not_valid_after', None)
                 cert_serial = hex(getattr(cert, 'serial_number', 0))[2:]
+                
+                # Validar se o certificado está dentro do período de validade
+                from datetime import datetime, timezone as dt_timezone
+                now = datetime.now(tz=dt_timezone.utc)
+                not_before = cert.not_valid_before.replace(tzinfo=dt_timezone.utc)
+                not_after = cert.not_valid_after.replace(tzinfo=dt_timezone.utc)
+                if not (not_before <= now <= not_after):
+                    return Response({'status': 'error', 'message': 'Certificado expirado ou ainda não válido.'}, status=400)
+                
+            except ValueError as e:
+                # Erro específico de senha incorreta
+                return Response({'status': 'error', 'message': 'Senha do certificado incorreta.'}, status=400)
+            except Exception as e:
+                # Outros erros de validação do certificado
+                return Response({'status': 'error', 'message': f'Erro ao validar certificado: {str(e)[:100]}'}, status=400)
+            
             # Reposicionar arquivo para assinatura
             pfx_file.seek(0)
-    except Exception:
-        # Dados do certificado não puderam ser extraídos; seguir sem exibir detalhes
-        try:
-            pfx_file.seek(0)
-        except Exception:
-            pass
+    except Exception as e:
+        # Erro geral ao processar o arquivo PFX
+        return Response({'status': 'error', 'message': f'Erro ao processar arquivo PFX: {str(e)[:100]}'}, status=400)
 
     # Gera página de QR e anexos (incluindo dados do certificado quando disponíveis)
     stamped_bytes = pdf_bytes
@@ -307,30 +334,47 @@ def assinar_documento(request):
     except Exception:
         stamped_bytes = pdf_bytes
 
-    # Assinatura digital PKCS#12 (obrigatória)
+    # Assinatura digital PKCS#12 usando pyHanko (obrigatória)
     pkcs_ok = False
     signed_bytes = stamped_bytes
     try:
-        from endesive import pdf as endesive_pdf
-        p12 = pfx_file.read()
-        dct = {
-            'sigflags': 3,
-            'contact': getattr(user, 'email', '') or '',
-            'location': location,
-            'signingdate': timezone.now().strftime("%Y%m%d%H%M%S+00'00'"),
-            'reason': reason,
-            # Caixa de assinatura (valores padrão em pontos)
-            'signaturebox': (50, 50, 300, 120),
-        }
-        signed_bytes = endesive_pdf.cms.sign(stamped_bytes, p12, pfx_password, dct)
-        pkcs_ok = True
-    except Exception:
-        pkcs_ok = False
-        signed_bytes = stamped_bytes
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+        from pyhanko.sign import signers
+        
+        # Usar o certificado e chave já validados
+        if cert and key:
+            rdr = PdfFileReader(BytesIO(stamped_bytes))
+            w = IncrementalPdfFileWriter(rdr)
+
+            simple_signer = signers.SimpleSigner(
+                private_key=key,
+                cert=cert,
+                other_certs=chain or [],
+            )
+            signature_meta = signers.SignatureMeta(
+                field_name=None,
+                reason=reason,
+                location=location,
+            )
+            pdf_signer = signers.PdfSigner(
+                signature_meta=signature_meta, 
+                signer=simple_signer, 
+                md_algorithm='sha256'
+            )
+            out = BytesIO()
+            pdf_signer.sign_pdf(w, output=out)
+            signed_bytes = out.getvalue()
+            pkcs_ok = True
+        else:
+            return Response({'status': 'error', 'message': 'Certificado ou chave privada não disponível para assinatura.'}, status=400)
+            
+    except Exception as e:
+        return Response({'status': 'error', 'message': f'Falha ao aplicar assinatura digital: {str(e)[:100]}'}, status=400)
 
     if not pkcs_ok:
         # Não retornar documento sem assinatura digital válida
-        return Response({'detail': 'Falha ao aplicar assinatura digital. Verifique o certificado e a senha.'}, status=400)
+        return Response({'status': 'error', 'message': 'Falha ao aplicar assinatura digital. Verifique o certificado e a senha.'}, status=400)
 
     # Atualiza registro da Receita se houver rid
     if rid:
@@ -354,8 +398,267 @@ def assinar_documento(request):
             receita.assinada = True
             receita.save()
         except Receita.DoesNotExist:
-            pass
+            return Response({'status': 'error', 'message': f'Receita {rid} não encontrada.'}, status=404)
+        except Exception as e:
+            return Response({'status': 'error', 'message': f'Erro ao salvar receita assinada: {str(e)[:100]}'}, status=500)
 
+    # Verificar se o frontend quer resposta JSON
+    want_json = (request.headers.get('Accept', '').lower().find('application/json') >= 0) or \
+                (str(request.query_params.get('return', '')).lower() == 'json')
+    
+    if want_json:
+        import base64
+        return Response({
+            'status': 'success',
+            'message': 'Documento assinado com sucesso',
+            'arquivo_assinado': base64.b64encode(signed_bytes).decode('ascii'),
+            'filename': signed_name,
+            'receita_id': rid
+        })
+    
     resp = HttpResponse(signed_bytes, content_type='application/pdf')
     resp['Content-Disposition'] = f"attachment; filename={signed_name}"
     return resp
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def assinar_receita(request):
+    """
+    Endpoint: /api/assinar-receita
+    Assina PDF de receita (PAdES básico) com certificado A1 (.pfx + senha).
+    Regras:
+    - Não persiste certificado, chave ou senha.
+    - Valida datas do certificado e extensões básicas, com logs de operação.
+    - Retorna o PDF assinado (application/pdf) ou JSON com base64 quando solicitado.
+    """
+    logs = []
+    try:
+        user = request.user
+        # Permite apenas médicos
+        if not (getattr(user, 'role', None) == 'medico' or getattr(user, 'medico', None)):
+            return Response({
+                'status': 'error',
+                'message': 'Apenas médicos podem assinar receitas.',
+                'logs': ['Permissão negada: usuário não é médico']
+            }, status=403)
+
+        rid = request.data.get('id_receita') or request.data.get('receita_id') or request.data.get('receita')
+        if not rid:
+            return Response({
+                'status': 'error',
+                'message': 'Parâmetro id_receita é obrigatório.',
+                'logs': ['id_receita ausente no formulário']
+            }, status=400)
+
+        # Arquivo PFX e senha
+        pfx_up = request.FILES.get('arquivo_pfx')
+        pfx_password = request.data.get('senha_certificado')
+        if pfx_up is None:
+            return Response({
+                'status': 'error',
+                'message': 'Arquivo .pfx (arquivo_pfx) é obrigatório.',
+                'logs': ['arquivo_pfx não enviado']
+            }, status=400)
+        if not pfx_password:
+            return Response({
+                'status': 'error',
+                'message': 'Senha do certificado (senha_certificado) é obrigatória.',
+                'logs': ['senha_certificado não enviada']
+            }, status=400)
+
+        # Carrega receita
+        try:
+            receita = Receita.objects.select_related('consulta', 'consulta__medico').get(pk=rid)
+        except Receita.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': 'Receita não encontrada.',
+                'logs': [f'Receita {rid} não existe']
+            }, status=404)
+
+        # Regra: somente o médico da consulta pode assinar
+        try:
+            medico_owner = getattr(receita.consulta, 'medico', None)
+            if medico_owner and hasattr(user, 'medico') and user.medico:
+                if medico_owner != user.medico:
+                    return Response({
+                        'status': 'error',
+                        'message': 'Você não é o médico responsável por esta receita.',
+                        'logs': ['Assinante diferente do médico da consulta']
+                    }, status=403)
+        except Exception:
+            pass
+
+        # Não permitir re-assinar inadvertidamente
+        if getattr(receita, 'assinada', False) and getattr(receita, 'arquivo_assinado', None):
+            return Response({
+                'status': 'error',
+                'message': 'Receita já assinada.',
+                'logs': ['Operação bloqueada: receita já assinada']
+            }, status=409)
+
+        # Carregar PDF original da receita (deve ter sido gerado previamente)
+        from django.conf import settings
+        import os
+        pdf_bytes = None
+
+        def load_receita_pdf_bytes(receita_id):
+            base_dir = getattr(settings, 'MEDIA_ROOT', None)
+            candidates = []
+            if base_dir:
+                candidates.extend([
+                    os.path.join(base_dir, 'receitas', f'{receita_id}.pdf'),
+                    os.path.join(base_dir, 'receitas', f'receita_{receita_id}.pdf'),
+                    os.path.join(base_dir, 'documentos', 'receitas', f'{receita_id}.pdf'),
+                    os.path.join(base_dir, 'documentos', 'receitas', f'receita_{receita_id}.pdf'),
+                ])
+                # Busca por nomes contendo o ID
+                for root, _, files in os.walk(os.path.join(base_dir, 'receitas')):
+                    for fn in files:
+                        if fn.lower().endswith('.pdf') and str(receita_id) in fn:
+                            candidates.append(os.path.join(root, fn))
+            for p in candidates:
+                try:
+                    if os.path.exists(p):
+                        with open(p, 'rb') as f:
+                            return f.read()
+                except Exception:
+                    continue
+            return None
+
+        pdf_bytes = load_receita_pdf_bytes(rid)
+        if pdf_bytes is None:
+            return Response({
+                'status': 'error',
+                'message': 'PDF da receita não encontrado.',
+                'logs': [f'Arquivo PDF ausente para receita {rid}']
+            }, status=404)
+
+        # Abrir .pfx e validar certificado
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        from cryptography import x509
+        from datetime import datetime, timezone as dt_timezone
+        try:
+            pfx_data = pfx_up.read()
+            logs.append('Certificado .pfx lido em memória')
+            key, cert, chain = pkcs12.load_key_and_certificates(pfx_data, pfx_password.encode('utf-8'))
+            if cert is None or key is None:
+                return Response({
+                    'status': 'error',
+                    'message': 'Falha ao abrir .pfx: certificado ou chave ausente.',
+                    'logs': ['pkcs12 retornou chave/certificado None']
+                }, status=400)
+            logs.append('Certificado carregado com sucesso')
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': 'Senha do certificado inválida ou .pfx corrompido.',
+                'logs': [f'Falha ao abrir .pfx: {str(e)[:200]}']
+            }, status=400)
+        finally:
+            try:
+                pfx_up.seek(0)
+            except Exception:
+                pass
+
+        # Validar validade
+        try:
+            now = datetime.now(tz=dt_timezone.utc)
+            not_before = cert.not_valid_before.replace(tzinfo=dt_timezone.utc)
+            not_after = cert.not_valid_after.replace(tzinfo=dt_timezone.utc)
+            if not (not_before <= now <= not_after):
+                return Response({
+                    'status': 'error',
+                    'message': 'Certificado expirado ou ainda não válido.',
+                    'logs': [f'Janela de validade: {not_before} .. {not_after}']
+                }, status=400)
+            logs.append('Validade do certificado dentro do período')
+        except Exception:
+            logs.append('Não foi possível validar datas do certificado (prosseguindo)')
+
+        # Validar extensões básicas
+        try:
+            bc = cert.extensions.get_extension_for_class(x509.BasicConstraints).value
+            logs.append(f'BasicConstraints: ca={bc.ca}')
+        except Exception:
+            logs.append('BasicConstraints não presente')
+        try:
+            pol = cert.extensions.get_extension_for_class(x509.CertificatePolicies).value
+            logs.append(f'CertificatePolicies: {len(pol)} políticas')
+        except Exception:
+            logs.append('CertificatePolicies não presente')
+
+        # Assinar com pyhanko (PAdES básico)
+        try:
+            from io import BytesIO
+            from pyhanko.pdf_utils.reader import PdfFileReader
+            from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+            from pyhanko.sign import signers
+
+            rdr = PdfFileReader(BytesIO(pdf_bytes))
+            w = IncrementalPdfFileWriter(rdr)
+
+            simple_signer = signers.SimpleSigner(
+                private_key=key,
+                cert=cert,
+                other_certs=chain or [],
+            )
+            signature_meta = signers.SignatureMeta(
+                field_name=None,
+                reason='Receita Médica',
+                location=getattr(receita.consulta, 'clinica', None) and str(receita.consulta.clinica) or '',
+            )
+            pdf_signer = signers.PdfSigner(signature_meta=signature_meta, signer=simple_signer, md_algorithm='sha256')
+            out = BytesIO()
+            pdf_signer.sign_pdf(w, output=out)
+            signed_bytes = out.getvalue()
+            logs.append('PDF assinado com PAdES básico (SHA-256)')
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': 'Falha na assinatura do PDF.',
+                'logs': [f'Erro pyhanko: {str(e)[:200]}']
+            }, status=500)
+
+        # Atualizar registro da receita (sem persistir cert/chave/senha)
+        try:
+            import hashlib
+            h = hashlib.sha256(signed_bytes or b'').hexdigest()
+            nome_arquivo = f"receita_{rid}_assinado.pdf"
+            receita.arquivo_assinado.save(nome_arquivo, ContentFile(signed_bytes), save=False)
+            receita.hash_documento = h
+            receita.algoritmo_assinatura = 'SHA256'
+            receita.carimbo_tempo = timezone.now().isoformat()
+            try:
+                receita.assinada_por = user
+            except Exception:
+                receita.assinada_por = None
+            receita.assinada_em = timezone.now()
+            receita.assinada = True
+            receita.save()
+            logs.append('Assinatura final gerada e registrada na receita')
+        except Exception as e:
+            # Falha ao salvar arquivo; ainda retornar o PDF assinado
+            logs.append(f'Falha ao salvar arquivo-assinado: {str(e)[:200]}')
+
+        # Responder em PDF ou JSON base64
+        want_json = (request.headers.get('Accept', '').lower().find('application/json') >= 0) or \
+                    (str(request.query_params.get('return', '')).lower() == 'json')
+        if want_json:
+            import base64
+            return Response({
+                'status': 'success',
+                'message': 'PDF assinado com sucesso',
+                'arquivo_assinado': base64.b64encode(signed_bytes).decode('ascii'),
+                'logs': logs,
+            })
+        resp = HttpResponse(signed_bytes, content_type='application/pdf')
+        resp['Content-Disposition'] = f"attachment; filename=receita_{rid}_assinado.pdf"
+        return resp
+    except Exception as e:
+        return Response({
+            'status': 'error',
+            'message': 'Erro interno ao assinar a receita.',
+            'logs': [str(e)[:200]]
+        }, status=500)
