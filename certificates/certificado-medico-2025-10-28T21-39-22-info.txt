@@ -1,0 +1,16 @@
+Certificado de Teste - Sistema Médico TCC
+===========================================
+
+Médico: Dr. API Teste
+CRM: CRM11111
+Data de Criação: 28/10/2025 21:39:22
+Validade: 29/10/2026 00:39:22
+Senha: api123
+
+Arquivos Gerados:
+- Certificado PFX: certificado-medico-2025-10-28T21-39-22.pfx
+- Certificado PEM: certificado-medico-2025-10-28T21-39-22.pem  
+- Chave Privada: certificado-medico-2025-10-28T21-39-22-key.pem
+
+ATENÇÃO: Este é um certificado de TESTE.
+NÃO deve ser usado em produção!

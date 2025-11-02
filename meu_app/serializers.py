@@ -462,7 +462,8 @@ class MedicamentoSerializer(serializers.ModelSerializer):
 
 class ReceitaItemSerializer(serializers.ModelSerializer):
     medicamento = MedicamentoSerializer(read_only=True)
+    medicamento_id = serializers.IntegerField(write_only=True)
 
     class Meta:
         model = ReceitaItem
-        fields = ['id', 'medicamento', 'dose', 'frequencia', 'duracao', 'observacoes']
+        fields = ['id', 'receita', 'medicamento', 'medicamento_id', 'dose', 'frequencia', 'duracao', 'observacoes']

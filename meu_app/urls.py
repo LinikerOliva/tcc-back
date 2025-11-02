@@ -1,9 +1,15 @@
 # topo do arquivo (importações)
 from django.urls import path, include
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+import json
 from rest_framework.routers import DefaultRouter
 from . import views  # manter para endpoints que ainda não foram divididos
-from .views.receitas import assinar_documento, assinar_receita
+from .views.receitas import assinar_documento, assinar_receita, gerar_receita_assinada, test_pdf_endpoint, simple_pdf_generator
 from .views.certificados import ValidateCertificateView
+from .views.pdf_generator import GerarReceitaPDFView
+from .views import admin as admin_views
+# from .views.certificates import generate_test_certificate, list_test_certificates, download_test_certificate
 
 auth_views = views
 clinica_views = views
@@ -17,6 +23,8 @@ router.register(r'consultas', views.ConsultaViewSet)
 router.register(r'prontuarios', views.ProntuarioViewSet)
 router.register(r'exames', views.ExameViewSet)
 router.register(r'receitas', views.ReceitaViewSet)
+router.register(r'receitaitem', views.ReceitaItemViewSet)
+router.register(r'medicamentos', views.MedicamentoViewSet)
 router.register(r'buscar-pacientes', views.BuscarPacientesViewSet, basename='buscar-pacientes')
 router.register(r'admin/auditoria', views.AuditLogViewSet, basename='admin-auditoria')
 router.register(r'medicos/solicitacoes', views.SolicitacaoMedicoViewSet, basename='solicitacoes-medico')
@@ -29,7 +37,39 @@ router.register(r'clinicas', views.ClinicaViewSet)  # <- novo
 router.register(r'secretarias', views.SecretariaViewSet, basename='secretaria')
 
 urlpatterns = [
-    # Ajuste: remover 'api/' antes do router, pois o projeto já prefixa com /api/
+    # IMPORTANTE: Endpoints específicos DEVEM vir ANTES do router para evitar conflitos
+    
+    # Endpoints de geração de PDF/documentos (múltiplos caminhos para compatibilidade)
+    path('gerar-receita/', gerar_receita_assinada, name='gerar_receita_assinada'),
+    path('receitas/documento/', gerar_receita_assinada, name='receitas_documento'),
+    path('receitas/pdf/', gerar_receita_assinada, name='receitas_pdf'),
+    path('receitas/preview/', gerar_receita_assinada, name='receitas_preview'),
+    path('receitas/gerar-documento/', gerar_receita_assinada, name='receitas_gerar_documento'),
+    path('receitas/gerar/', gerar_receita_assinada, name='receitas_gerar'),
+    
+    # Novo endpoint usando xhtml2pdf
+    path('medicos/me/receitas/gerar-documento/', GerarReceitaPDFView.as_view(), name='gerar_receita_pdf_xhtml2pdf'),
+
+    # --- ENDPOINTS DE ASSINATURA ---
+    path('assinatura/assinar/', assinar_documento, name='assinatura-assinar'),
+    path('assinar-receita/', assinar_receita, name='assinar-receita'),
+
+    # Endpoint de teste sem autenticação
+    path('test-pdf/', test_pdf_endpoint, name='test_pdf'),
+    
+    # Novo endpoint simples para PDF
+    path('simple-pdf/', simple_pdf_generator, name='simple_pdf'),
+    
+    # Endpoint de teste sem autenticação
+    path('test-auth/', lambda request: JsonResponse({'message': 'Test endpoint working', 'method': request.method}), name='test_auth'),
+    
+    # Novo endpoint de teste para PDF sem DRF
+    path('test-pdf-simple/', csrf_exempt(lambda request: JsonResponse({'message': 'PDF test endpoint', 'method': request.method}) if request.method == 'GET' else JsonResponse({'message': 'PDF generation would happen here', 'data': json.loads(request.body) if request.body else None})), name='test_pdf_simple'),
+
+    # --- ENDPOINT DE VALIDAÇÃO DE CERTIFICADO ---
+    path('assinatura/certificado/', ValidateCertificateView.as_view(), name='validar-certificado'),
+
+    # ROUTER DRF - DEVE VIR DEPOIS DOS ENDPOINTS ESPECÍFICOS
     path('', include(router.urls)),
     path('api-auth/', include('rest_framework.urls')),
 
@@ -56,16 +96,14 @@ urlpatterns = [
     path('auth/password_reset_confirm/', auth_views.password_reset_confirm_api, name='password_reset_confirm'),
 
     # Stub: endpoint de relatórios/admin/solicitações (lista vazia para não quebrar o frontend)
-    path('admin/dashboard/', views.admin_dashboard, name='admin-dashboard'),
-    path('admin/solicitacoes/', solicitacoes_views.admin_solicitacoes_list, name='admin-solicitacoes'),
-    path('admin/solicitacoes/<uuid:pk>/', solicitacoes_views.admin_solicitacao_detail, name='admin-solicitacao-detail'),
-    path('admin/solicitacoes/<uuid:pk>/aprovar/', solicitacoes_views.admin_solicitacao_aprovar, name='admin-solicitacao-aprovar'),
-    path('admin/solicitacoes/<uuid:pk>/rejeitar/', solicitacoes_views.admin_solicitacao_rejeitar, name='admin-solicitacao-rejeitar'),
+    path('admin/dashboard/', admin_views.admin_dashboard, name='admin-dashboard'),
+    path('admin/solicitacoes/', admin_views.admin_solicitacoes_list, name='admin-solicitacoes'),
+    path('admin/solicitacoes/<uuid:pk>/', admin_views.admin_solicitacao_detail, name='admin-solicitacao-detail'),
+    path('admin/solicitacoes/<uuid:pk>/aprovar/', admin_views.admin_solicitacao_aprovar, name='admin-solicitacao-aprovar'),
+    path('admin/solicitacoes/<uuid:pk>/rejeitar/', admin_views.admin_solicitacao_rejeitar, name='admin-solicitacao-rejeitar'),
 
-    # --- ENDPOINTS DE ASSINATURA ---
-    path('assinatura/assinar/', assinar_documento, name='assinatura-assinar'),
-    path('assinar-receita/', assinar_receita, name='assinar-receita'),
-
-    # --- ENDPOINT DE VALIDAÇÃO DE CERTIFICADO ---
-    path('assinatura/certificado/', ValidateCertificateView.as_view(), name='validar-certificado'),
+    # --- ENDPOINTS DE CERTIFICADOS DE TESTE (COMENTADOS - MÓDULO NÃO EXISTE) ---
+    # path('certificates/generate/', generate_test_certificate, name='generate-test-certificate'),
+    # path('certificates/list/', list_test_certificates, name='list-test-certificates'),
+    # path('certificates/download/<str:filename>/', download_test_certificate, name='download-test-certificate'),
 ]
