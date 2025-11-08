@@ -86,6 +86,11 @@ class Medico(models.Model):
     ]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pendente')
 
+    # --- NOVO: Configuração de template e logo do médico ---
+    template_config = models.JSONField(null=True, blank=True, default=dict)
+    logo = models.ImageField(upload_to='logos/medicos/', null=True, blank=True)
+
+
     class Meta:
         verbose_name = "Médico"
         verbose_name_plural = "Médicos"

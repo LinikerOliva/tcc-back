@@ -6,6 +6,9 @@ from ..models import Medico, MedicoPaciente, Consulta
 from ..serializers import MedicoSerializer, PacienteSerializer, ConsultaSerializer
 from rest_framework import permissions
 from ..models import Medico, Secretaria
+from django.core.files.base import ContentFile
+import base64
+import re
 
 class IsMedicoOrSecretaria(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -146,3 +149,87 @@ class MedicoViewSet(viewsets.ModelViewSet):
         hoje = timezone.localdate()
         consultas = medico.consultas.filter(data_hora__date=hoje).order_by('data_hora')
         return Response(ConsultaListSerializer(consultas, many=True).data)
+    @action(detail=False, methods=['post', 'get'], url_path='template')
+    def template(self, request):
+        """
+        GET: retorna template_config e logo do médico autenticado (ou do médico selecionado pela secretária)
+        POST: salva template_config (JSON) e logo (base64 data URL) para o médico
+        """
+        role = getattr(request.user, 'role', None)
+
+        medico = None
+        medico_id = request.data.get('medico_id') or request.query_params.get('medico') or request.query_params.get('medico_id')
+        if role == 'medico':
+            medico = Medico.objects.filter(user=request.user).first()
+        elif role == 'secretaria':
+            if medico_id:
+                try:
+                    cand = Medico.objects.get(pk=medico_id)
+                except Medico.DoesNotExist:
+                    cand = None
+                if cand and cand in request.user.secretaria.medicos.all():
+                    medico = cand
+        elif role == 'admin':
+            if medico_id:
+                medico = Medico.objects.filter(pk=medico_id).first()
+
+        if not medico:
+            return Response({'detail': 'Médico não encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.method.lower() == 'get':
+            logo_url = None
+            if getattr(medico, 'logo', None):
+                try:
+                    logo_url = request.build_absolute_uri(medico.logo.url)
+                except Exception:
+                    logo_url = str(medico.logo)
+            return Response({
+                'medico_id': str(medico.pk),
+                'template_config': getattr(medico, 'template_config', None) or {},
+                'doctor_logo_url': logo_url,
+            })
+
+        template_config = request.data.get('template_config')
+        doctor_logo = request.data.get('doctor_logo')
+
+        if isinstance(template_config, str):
+            try:
+                import json
+                template_config = json.loads(template_config)
+            except Exception:
+                template_config = None
+
+        if template_config is not None:
+            medico.template_config = template_config
+
+        if isinstance(doctor_logo, str) and doctor_logo.startswith('data:'):
+            try:
+                match = re.match(r"data:(.*?);base64,(.*)", doctor_logo)
+                if match:
+                    mime = match.group(1)
+                    b64 = match.group(2)
+                    ext = 'png'
+                    if 'jpeg' in mime or 'jpg' in mime:
+                        ext = 'jpg'
+                    elif 'gif' in mime:
+                        ext = 'gif'
+                    filename = f"medico_{medico.pk}.{ext}"
+                    medico.logo.save(filename, ContentFile(base64.b64decode(b64)), save=False)
+            except Exception:
+                pass
+
+        medico.save()
+
+        logo_url = None
+        if getattr(medico, 'logo', None):
+            try:
+                logo_url = request.build_absolute_uri(medico.logo.url)
+            except Exception:
+                logo_url = str(medico.logo)
+
+        return Response({
+            'medico_id': str(medico.pk),
+            'template_config': getattr(medico, 'template_config', None) or {},
+            'doctor_logo_url': logo_url,
+            'status': 'saved',
+        })
