@@ -147,7 +147,12 @@ class ReceitaViewSet(viewsets.ModelViewSet):
                     
                     # Marcar como assinada automaticamente (finalizada)
                     receita.assinada = True
-                    receita.assinada_por = request.user
+                    # Preferir o médico da consulta; se não houver, usar o usuário atual
+                    try:
+                        medico_user = getattr(getattr(receita.consulta, 'medico', None), 'user', None)
+                    except Exception:
+                        medico_user = None
+                    receita.assinada_por = medico_user or request.user
                     receita.assinada_em = timezone.now()
                     receita.carimbo_tempo = timezone.now().isoformat()
                     
