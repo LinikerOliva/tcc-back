@@ -69,6 +69,9 @@ urlpatterns = [
     # --- ENDPOINT DE VALIDAÇÃO DE CERTIFICADO ---
     path('assinatura/certificado/', ValidateCertificateView.as_view(), name='validar-certificado'),
 
+    # --- NOVO: Persistência Consulta + Receita ---
+    path('consultas/criar-consulta-e-receita/', views.criar_consulta_e_receita, name='criar-consulta-e-receita'),
+
     # ROUTER DRF - DEVE VIR DEPOIS DOS ENDPOINTS ESPECÍFICOS
     path('', include(router.urls)),
     path('api-auth/', include('rest_framework.urls')),

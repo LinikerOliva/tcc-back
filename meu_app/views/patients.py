@@ -2,8 +2,8 @@ from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from ..models import Paciente, MedicoPaciente, Consulta
-from ..serializers import PacienteSerializer, MedicoSerializer, ConsultaListSerializer
+from ..models import Paciente, MedicoPaciente, Consulta, Receita
+from ..serializers import PacienteSerializer, MedicoSerializer, ConsultaListSerializer, ReceitaSerializer
 
 class PacienteViewSet(viewsets.ModelViewSet):
     queryset = Paciente.objects.select_related('user').all()
@@ -72,4 +72,18 @@ class PacienteViewSet(viewsets.ModelViewSet):
             .order_by('data_hora')[:5]
         )
         serializer = ConsultaListSerializer(consultas, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def receitas(self, request, pk=None):
+        """Lista receitas do paciente (com itens)"""
+        paciente = self.get_object()
+        qs = (
+            Receita.objects
+            .select_related('consulta', 'consulta__paciente', 'consulta__medico')
+            .prefetch_related('itens')
+            .filter(consulta__paciente=paciente)
+            .order_by('-created_at')
+        )
+        serializer = ReceitaSerializer(qs, many=True)
         return Response(serializer.data)

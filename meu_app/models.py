@@ -194,6 +194,13 @@ class Consulta(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    data = models.DateTimeField(null=True, blank=True)
+    queixa_principal = models.TextField(blank=True, default="")
+    historia_doenca = models.TextField(blank=True, default="")
+    diagnostico = models.TextField(blank=True, default="")
+    conduta = models.TextField(blank=True, default="")
+    resumo_clinico = models.TextField(blank=True, default="")
+
     # >>> NOVO: Assinatura Digital da consulta
     assinatura_hash = models.CharField(max_length=128, blank=True)
     assinatura_algoritmo = models.CharField(max_length=50, blank=True)  # ex.: SHA256withRSA
@@ -328,8 +335,15 @@ class Receita(models.Model):
     medicamentos = models.TextField(help_text="Lista de medicamentos prescritos")
     posologia = models.TextField(help_text="Instruções de uso")
     observacoes = models.TextField(blank=True)
-    validade = models.DateField(help_text="Data de validade da receita")
+    validade = models.DateField(help_text="Data de validade da receita", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    data_emissao = models.DateTimeField(auto_now_add=True, null=True)
+
+    STATUS_CHOICES = [
+        ('PENDENTE', 'PENDENTE'),
+        ('ASSINADA', 'ASSINADA'),
+    ]
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDENTE')
 
     # Assinatura da receita
     hash_documento = models.CharField(max_length=128, blank=True)
@@ -338,6 +352,7 @@ class Receita(models.Model):
     assinada_por = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='receitas_assinadas')
     assinada_em = models.DateTimeField(null=True, blank=True)
     arquivo_assinado = models.FileField(upload_to='assinaturas/receitas/', null=True, blank=True)
+    arquivo_pdf_assinado = models.FileField(upload_to='receitas_assinadas/', null=True, blank=True)
     # NOVO: status booleano de assinatura
     assinada = models.BooleanField(default=False)
 
@@ -365,20 +380,17 @@ class Medicamento(models.Model):
         return f"{self.nome} {self.concentracao} ({self.apresentacao})"
 
 class ReceitaItem(models.Model):
-    """Itens de uma receita"""
     receita = models.ForeignKey(Receita, on_delete=models.CASCADE, related_name='itens')
-    medicamento = models.ForeignKey(Medicamento, on_delete=models.PROTECT, related_name='itens')
-    dose = models.CharField(max_length=100, blank=True)        # ex: 1 comprimido
-    frequencia = models.CharField(max_length=100, blank=True)  # ex: 8/8h
-    duracao = models.CharField(max_length=100, blank=True)     # ex: 7 dias
-    observacoes = models.TextField(blank=True)
+    medicamento = models.CharField(max_length=255)
+    posologia = models.TextField(blank=True, default="")
+    quantidade = models.CharField(max_length=50, null=True, blank=True)
 
     class Meta:
         verbose_name = "Item de Receita"
         verbose_name_plural = "Itens de Receita"
 
     def __str__(self):
-        return f"{self.medicamento} - {self.dose}, {self.frequencia}, {self.duracao}"
+        return f"{self.medicamento}"
 
 class Agendamento(models.Model):
     """Slots de agendamento do médico"""

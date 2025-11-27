@@ -461,31 +461,8 @@ class MedicamentoSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ReceitaItemSerializer(serializers.ModelSerializer):
-    medicamento = MedicamentoSerializer(read_only=True)
-    # Alias write-only para compatibilidade com o front (receita_id -> receita)
     receita_id = serializers.PrimaryKeyRelatedField(queryset=Receita.objects.all(), source='receita', write_only=True, required=False)
-    # Campo simples vindo do front, mapeado abaixo para FK
-    medicamento_id = serializers.IntegerField(write_only=True, required=False)
 
     class Meta:
         model = ReceitaItem
-        fields = ['id', 'receita', 'receita_id', 'medicamento', 'medicamento_id', 'dose', 'frequencia', 'duracao', 'observacoes']
-
-    def create(self, validated_data):
-        # Mapear medicamento_id -> medicamento (FK) se fornecido
-        med_id = None
-        try:
-            raw = getattr(self, 'initial_data', {})
-            val = raw.get('medicamento_id', None)
-            if val is None:
-                val = raw.get('medicamento', None)
-            med_id = int(val) if val is not None and str(val).isdigit() else None
-        except Exception:
-            med_id = None
-
-        if med_id:
-            med_obj = Medicamento.objects.filter(pk=med_id).first()
-            if med_obj:
-                validated_data['medicamento'] = med_obj
-
-        return super().create(validated_data)
+        fields = ['id', 'receita', 'receita_id', 'medicamento', 'posologia', 'quantidade']

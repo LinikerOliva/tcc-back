@@ -4,12 +4,16 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.shortcuts import render
-from ..models import Consulta, Medico, Paciente, MedicoPaciente
+from ..models import Consulta, Medico, Paciente, MedicoPaciente, Receita, ReceitaItem
 from ..serializers import ConsultaSerializer, ConsultaListSerializer, ConsultaCreateSerializer
+from django.db import transaction
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from rest_framework.decorators import api_view, permission_classes
 
 # Adiciona import do cliente Gemini (módulo local)
 try:
-    import ai_gemini
+    from . import ai_gemini
 except Exception:
     ai_gemini = None
 
@@ -141,6 +145,7 @@ class ConsultaViewSet(viewsets.ModelViewSet):
                 'temperatura': extracted.get('temperatura') or '',
                 'saturacao': extracted.get('saturacao') or '',
             }
+            out['queixa'] = limpar_lixo_ia(limpar_queixa(out.get('queixa') or ''))
             return Response(out, status=status.HTTP_200_OK)
 
         contexto = {
@@ -167,6 +172,7 @@ class ConsultaViewSet(viewsets.ModelViewSet):
                 'saturacao': extracted.get('saturacao') or '',
                 '_warning': 'ai_gemini módulo não disponível no servidor'
             }
+            out['queixa'] = limpar_lixo_ia(limpar_queixa(out.get('queixa') or ''))
             return Response(out, status=status.HTTP_200_OK)
 
         try:
@@ -187,6 +193,18 @@ class ConsultaViewSet(viewsets.ModelViewSet):
                 'saturacao': extracted.get('saturacao') or '',
                 '_error': str(e)
             }
+            try:
+                from . import ai_gemini as _ai
+                off = _ai._offline_structured(transcript)
+                out['queixa'] = off.get('queixa') or out.get('queixa') or ''
+                out['medicamentos'] = off.get('medicamentos') or out.get('medicamentos') or ''
+                out['posologia'] = off.get('posologia') or out.get('posologia') or ''
+                out['historia_doenca_atual'] = off.get('historia_doenca_atual') or out.get('historia_doenca_atual') or ''
+                out['diagnostico_principal'] = off.get('diagnostico_principal') or out.get('diagnostico_principal') or ''
+                out['conduta'] = off.get('conduta') or out.get('conduta') or ''
+            except Exception:
+                pass
+            out['queixa'] = limpar_lixo_ia(limpar_queixa(out.get('queixa') or ''))
             return Response(out, status=status.HTTP_200_OK)
 
         def g(obj, keys, default=""):
@@ -210,6 +228,24 @@ class ConsultaViewSet(viewsets.ModelViewSet):
             'saturacao': g(result, ['saturacao', 'spo2', 'oximetria']),
             '_raw': result,
         }
+        try:
+            from . import ai_gemini as _ai
+            off = _ai._offline_structured(transcript)
+            if not normalized['queixa'] or 'bom dia' in (normalized['queixa'] or '').lower():
+                normalized['queixa'] = off.get('queixa') or normalized['queixa']
+            if not normalized['medicamentos']:
+                normalized['medicamentos'] = off.get('medicamentos') or ''
+            if not normalized['posologia']:
+                normalized['posologia'] = off.get('posologia') or ''
+            if not normalized['historia_doenca_atual']:
+                normalized['historia_doenca_atual'] = off.get('historia_doenca_atual') or ''
+            if not normalized['diagnostico_principal']:
+                normalized['diagnostico_principal'] = off.get('diagnostico_principal') or ''
+            if not normalized['conduta']:
+                normalized['conduta'] = off.get('conduta') or ''
+        except Exception:
+            pass
+        normalized['queixa'] = limpar_lixo_ia(limpar_queixa(normalized.get('queixa') or ''))
         return Response(normalized, status=status.HTTP_200_OK)
 
 # --- UI (HTML) ---
@@ -217,3 +253,88 @@ class ConsultaViewSet(viewsets.ModelViewSet):
 def consultas_page(request):
     """Renderiza a tela (UI) de Consultas para uso no navegador."""
     return render(request, 'consultas.html', {})
+
+
+def limpar_queixa(texto_queixa: str) -> str:
+    frases_proibidas = [
+        "Bom dia, tudo bem?",
+        "O que te traz aqui hoje?",
+        "Olá, doutor",
+        "Bom dia doutor",
+        "Tudo bem?"
+    ]
+    s = (texto_queixa or "").strip()
+    low = s.lower()
+    for frase in frases_proibidas:
+        if frase.lower() in low:
+            return ""
+    if low.startswith("bom dia"):
+        s2 = s[len("bom dia"):]
+        s2 = s2.replace("tudo bem?", "")
+        return s2.strip(",. ")
+    return s
+
+def limpar_lixo_ia(texto: str) -> str:
+    if not texto:
+        return ""
+    texto_lower = texto.lower().strip()
+    frases_proibidas = [
+        "bom dia", "boa tarde", "boa noite",
+        "o que te traz aqui", "tudo bem",
+        "ola doutor", "olá doutor"
+    ]
+    for frase in frases_proibidas:
+        if frase in texto_lower and len(texto) < 50:
+            novo_texto = texto_lower.replace(frase, "").replace("?", "").strip()
+            if len(novo_texto) < 5:
+                return ""
+    return texto
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def criar_consulta_e_receita(request):
+    payload = request.data or {}
+    dados = payload.get('dados', {})
+    texto = payload.get('texto', '')
+
+    data_str = dados.get('data')
+    data_dt = parse_datetime(data_str) if isinstance(data_str, str) else data_str
+    if data_dt is None:
+        data_dt = timezone.now()
+
+    with transaction.atomic():
+        consulta = Consulta.objects.create(
+            paciente_id=dados.get('paciente_id'),
+            medico_id=dados.get('medico_id'),
+            data_hora=data_dt,
+            data=data_dt,
+            motivo=dados.get('queixa_principal') or 'Motivo não informado',
+            observacoes=dados.get('observacoes') or '',
+            queixa_principal=limpar_lixo_ia(limpar_queixa(dados.get('queixa_principal', ''))),
+            historia_doenca=dados.get('historia_doenca', ''),
+            diagnostico=dados.get('diagnostico', ''),
+            conduta=dados.get('conduta', ''),
+            resumo_clinico=dados.get('resumo_clinico', ''),
+        )
+
+        receita = Receita.objects.create(
+            consulta=consulta,
+            status='PENDENTE'
+        )
+
+        itens = []
+        try:
+            if ai_gemini:
+                itens = ai_gemini.extract_prescription_items(texto) or []
+        except Exception:
+            itens = []
+
+        for item in itens:
+            ReceitaItem.objects.create(
+                receita=receita,
+                medicamento=item.get('medicamento', ''),
+                posologia=item.get('posologia', ''),
+                quantidade=item.get('quantidade') or None,
+            )
+
+    return Response({'receita_id': str(receita.id)})

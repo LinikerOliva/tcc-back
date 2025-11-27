@@ -8,23 +8,35 @@ API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.geten
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 _SYSTEM_PROMPT = """
-Você é um assistente médico que lê a transcrição de uma consulta e retorna um resumo estruturado.
-Responda APENAS JSON estrito com as chaves:
-{
-  "queixa": string,
-  "historia_doenca_atual": string,
-  "diagnostico_principal": string,
-  "conduta": string,
-  "medicamentos": string,
-  "posologia": string,
-  "alergias": string,
-  "pressao": string,
-  "frequencia_cardiaca": string,
-  "temperatura": string,
-  "saturacao": string
-}
-Regra de medicamentos: identifique linhas de prescrição mesmo sem rótulo, procurando padrões como dosagens (mg, ml, g, mcg), formas farmacêuticas (comprimido, cápsula, gotas, spray), frequências (1x ao dia, 12/12h, a cada N h) e durações (por N dias/semanas). Se houver múltiplos itens, una em uma string separada por \n. Em "posologia", coloque instruções de uso e frequência.
-Formate unidades (mmHg, bpm, °C, %). Se um dado não existir, use string vazia.
+VOCÊ É UM 'MEDICAL SCRIBE' (ESCRIVÃO MÉDICO) DE ELITE.
+SUA ÚNICA FUNÇÃO É LER UMA TRANSCRIÇÃO DE CONSULTA E PREENCHER O PRONTUÁRIO.
+⛔ REGRAS DE ELIMINAÇÃO DE RUÍDO (CRÍTICO):
+
+A transcrição NÃO tem nomes. Você deve deduzir quem fala.
+
+A primeira frase é QUASE SEMPRE do médico ("Bom dia", "O que sente?"). IGNORE ISSO NA QUEIXA.
+
+SE O CAMPO FOR "BOM DIA" OU "TUDO BEM", DEIXE VAZIO STRING "".
+
+🧠 COMO PREENCHER CADA CAMPO:
+
+'queixa': O SINTOMA que o paciente diz. (Ex: "Dor de cabeça", "Febre"). NÃO inclua perguntas do médico.
+
+'historia_doenca_atual': Detalhes de tempo, evolução, outros sintomas (Ex: "Começou há 2 dias, piora com luz").
+
+'diagnostico': O nome da doença que o médico concluiu (Ex: "Faringite", "Virose").
+
+'conduta': Orientações (Ex: "Repouso", "Beber água"). NÃO coloque remédios aqui.
+
+'medicamentos': APENAS os nomes e dosagens dos remédios (Ex: "Dipirona 500mg").
+
+'posologia': Como tomar (Ex: "1 cp a cada 6h se dor").
+
+📝 EXEMPLO DE EXTRAÇÃO CORRETA: Entrada: "Oi doutor. Oi, o que houve? To com dor de barriga faz 3 dias." Saída JSON: { "queixa": "Dor de barriga", "historia_doenca_atual": "Duração de 3 dias", ... }
+
+(Note que ignoramos o 'Oi doutor' e o 'o que houve' na queixa).
+
+📤 SAÍDA ESPERADA: Retorne APENAS um JSON válido. Sem markdown. Sem 'Aqui está'.
 """.strip()
 
 
@@ -46,7 +58,7 @@ def summarize_transcript(transcript: str, contexto: dict | None = None) -> dict:
     """Summarize using Gemini and return a normalized JSON dict.
     If SDK unavailable or fails, tries HTTP.
     """
-    context_txt = json.dumps(contexto or {}, ensure_ascii=False)
+    context_txt = json.dumps(contexto or {}, ensure_ascii=False, default=str)
     user_text = f"{_SYSTEM_PROMPT}\n\nContexto prévio (opcional): {context_txt}\n\nTranscrição:\n{transcript or ''}"
 
     # Try SDK first
@@ -73,7 +85,10 @@ def summarize_transcript(transcript: str, contexto: dict | None = None) -> dict:
 
     # Fallback: HTTP via requests
     if not API_KEY:
-        return {"error": "GEMINI_API_KEY não configurada"}
+        try:
+            return _offline_structured(transcript)
+        except Exception:
+            return {"error": "GEMINI_API_KEY não configurada"}
 
     import requests  # lazy import
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
@@ -99,9 +114,9 @@ def summarize_transcript(transcript: str, contexto: dict | None = None) -> dict:
                 return _postprocess(result, transcript)
             except Exception:
                 return {"summary_text": text}
-        return {"error": "Resposta vazia do Gemini"}
-    except Exception as e:
-        return {"error": str(e)}
+        return _offline_structured(transcript)
+    except Exception:
+        return _offline_structured(transcript)
 
 
 def _extract_json(text: str) -> str:
@@ -113,8 +128,8 @@ def _extract_json(text: str) -> str:
 def _postprocess(obj: dict, source_txt: str) -> dict:
     out = {
         "queixa": str(obj.get("queixa") or ""),
-        "historia_doenca_atual": str(obj.get("historia_doenca_atual") or obj.get("historia") or ""),
-        "diagnostico_principal": str(obj.get("diagnostico_principal") or obj.get("diagnostico") or ""),
+        "historia_doenca_atual": str(obj.get("historia_doenca_atual") or ""),
+        "diagnostico": str(obj.get("diagnostico") or obj.get("diagnostico_principal") or ""),
         "conduta": str(obj.get("conduta") or ""),
         "medicamentos": str(obj.get("medicamentos") or ""),
         "posologia": str(obj.get("posologia") or ""),
@@ -124,13 +139,7 @@ def _postprocess(obj: dict, source_txt: str) -> dict:
         "temperatura": str(obj.get("temperatura") or ""),
         "saturacao": str(obj.get("saturacao") or ""),
     }
-
-    meds, poso = _extract_meds(source_txt or "")
-    if not out["medicamentos"] and meds:
-        out["medicamentos"] = meds
-    if not out["posologia"] and poso:
-        out["posologia"] = poso
-
+    out["queixa"] = _clean_queixa(out.get("queixa") or "")
     return out
 
 
@@ -140,7 +149,7 @@ def _extract_meds(text: str) -> tuple[str, str]:
     lines = [l.strip() for l in txt.replace("\r", "").split("\n") if l.strip()]
     candidates = []
     for l in lines:
-        if re.search(r"\b(mg|ml|g|mcg|comprimid|c[áa]psul|gotas|spray)\b", l, re.I):
+        if re.search(r"\b(mg|ml|mcg|comprimid|c[áa]psul|gotas|spray)\b", l, re.I):
             candidates.append(l)
         elif re.search(r"\b(vou\s+(te\s+)?(receitar|prescrever|indicar|recomendar))\b", l, re.I):
             candidates.append(l)
@@ -152,7 +161,7 @@ def _extract_meds(text: str) -> tuple[str, str]:
         for m in re.finditer(r"(?:pode\s+associar|associar|usar|tomar)[^\n\.;]*(metoclopramida|ondansetrona|domperidona)[^\n\.;]*", txt, re.I):
             candidates.append(m.group(0).strip())
     if not candidates:
-        m = re.search(r"(.+?(\d+\s?(mg|ml|g|mcg)|comprimid|c[áa]psul|gotas|spray).*)", txt, re.I)
+        m = re.search(r"(.+?(\d+\s?(mg|ml|mcg)|comprimid|c[áa]psul|gotas|spray).*)", txt, re.I)
         if m:
             candidates.append(m.group(1).strip())
     # Extrair nomes limpos (evitar parágrafos completos)
@@ -169,17 +178,23 @@ def _extract_meds(text: str) -> tuple[str, str]:
         m1 = re.search(r"(\d{1,2}\s*\/\s*\d{1,2})\s*h", s, re.I)
         if m1:
             val = m1.group(1).replace(" ", "")
-            return f"de {val}H".upper()
+            try:
+                a, b = [int(x) for x in val.split('/')]
+                if a == b:
+                    return f"a cada {b} horas"
+            except Exception:
+                pass
+            return f"a cada {val.replace('/', ' ')} horas"
         m2 = re.search(r"a\s*cada\s*(\d{1,2})\s*h", s, re.I)
         if m2:
             n = int(m2.group(1))
-            return f"de {n}/{n}H".upper()
+            return f"a cada {n} horas"
         m3 = re.search(r"(\d)\s*x\s*ao\s*dia", s, re.I)
         if m3:
             f = int(m3.group(1))
             if f > 0:
                 h = int(round(24 / f))
-                return f"de {h}/{h}H".upper()
+                return f"a cada {h} horas"
         return None
 
     def _med_name(line: str) -> str:
@@ -214,3 +229,113 @@ def _extract_meds(text: str) -> tuple[str, str]:
             poso_lines.append(detail)
     posologia = "\n".join(poso_lines)
     return medicamentos, posologia
+
+def _clean_queixa(s: str) -> str:
+    frases = [
+        "Bom dia, tudo bem?",
+        "O que te traz aqui hoje?",
+        "Olá, doutor",
+        "Bom dia doutor",
+        "Tudo bem?",
+    ]
+    t = (s or "").strip()
+    low = t.lower()
+    for f in frases:
+        if f.lower() in low:
+            return ""
+    if low.startswith("bom dia"):
+        t2 = t[len("Bom dia"):]
+        t2 = t2.replace("tudo bem?", "")
+        return t2.strip(",. ")
+    return t
+
+
+def extract_prescription_items(texto: str) -> list[dict]:
+    # Primeiro, extrair localmente (sem depender da API)
+    meds, poso = _extract_meds(texto or "")
+    med_lines = [l.strip() for l in meds.replace("\r", "").split("\n") if l.strip()]
+    poso_lines = [l.strip() for l in poso.replace("\r", "").split("\n") if l.strip()]
+    items: list[dict] = []
+    for ml in med_lines:
+        match = next((pl for pl in poso_lines if pl.lower().startswith(ml.lower())), "")
+        items.append({
+            "medicamento": ml,
+            "posologia": match or poso,
+            "quantidade": None
+        })
+    if not items and (meds or poso):
+        items.append({
+            "medicamento": meds or "",
+            "posologia": poso or "",
+            "quantidade": None
+        })
+    # Se a API estiver disponível, tentar refinar
+    try:
+        result = summarize_transcript(texto or "", contexto=None)
+        meds2 = str(result.get("medicamentos") or "").strip()
+        poso2 = str(result.get("posologia") or "").strip()
+        if meds2 or poso2:
+            med2_lines = [l.strip() for l in meds2.replace("\r", "").split("\n") if l.strip()]
+            poso2_lines = [l.strip() for l in poso2.replace("\r", "").split("\n") if l.strip()]
+            items = []
+            for ml in med2_lines or med_lines:
+                match = next((pl for pl in poso2_lines if pl.lower().startswith(ml.lower())), "")
+                items.append({
+                    "medicamento": ml,
+                    "posologia": match or poso2 or poso,
+                    "quantidade": None
+                })
+    except Exception:
+        pass
+    return items
+
+
+def _offline_structured(txt: str) -> dict:
+    t = (txt or "").replace("\r", "").strip()
+    lines = [l.strip() for l in t.split("\n") if l.strip()]
+    def contains(s: str, *k):
+        s2 = s.lower()
+        return all(kw.lower() in s2 for kw in k)
+    # Queixa: primeira frase do paciente
+    queixa = ""
+    for l in lines:
+        if contains(l, "estou") or contains(l, "tô") or contains(l, "eu tô") or contains(l, "eu estou"):
+            queixa = l
+            break
+    if not queixa:
+        import re
+        m = re.search(r"eu\s+(?:tô|estou)\s+com\s+([^\.\n]+)", t, re.I)
+        if m:
+            queixa = m.group(1).strip()
+    # História: procurar duração e febre
+    hda_parts = []
+    for l in lines:
+        if contains(l, "começou") or contains(l, "faz uns") or contains(l, "dias"):
+            hda_parts.append(l)
+        if contains(l, "febre") or contains(l, "38"):
+            hda_parts.append(l)
+        if contains(l, "corpo") or contains(l, "mole"):
+            hda_parts.append(l)
+    historia = "; ".join(dict.fromkeys(hda_parts))
+    # Diagnóstico: frases do médico com "parece ser" ou nome da condição
+    diag = ""
+    for l in lines:
+        if contains(l, "parece ser") or contains(l, "faringite"):
+            diag = l
+            break
+    # Conduta: recomendações
+    cond_parts = []
+    for l in lines:
+        if contains(l, "repouso") or contains(l, "hidratação") or contains(l, "beber") or contains(l, "evite"):
+            cond_parts.append(l)
+    conduta = "; ".join(dict.fromkeys(cond_parts))
+    # Medicamentos e posologia
+    meds, poso = _extract_meds(t)
+    return {
+        "queixa": _clean_queixa(queixa),
+        "historia_doenca_atual": historia,
+        "diagnostico_principal": diag,
+        "conduta": conduta,
+        "medicamentos": meds,
+        "posologia": poso,
+    }
