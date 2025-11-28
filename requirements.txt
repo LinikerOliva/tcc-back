@@ -16,12 +16,10 @@ asn1crypto>=1.5.1
 pypdf>=3.8.1
 endesive>=2.14.0
 gunicorn==21.2.0
-python-dotenv
-<<<<<<< HEAD
+python-dotenv==0.19.2
+reportlab==3.6.13
 weasyprint>=61.0
 whitenoise>=6.6.0
 dj-database-url>=2.1.0
 psycopg2-binary>=2.9.9
 django-redis>=5.4.0
-=======
->>>>>>> 17d0bbf2ea36a601166e31d20214b1938d3c01c0
