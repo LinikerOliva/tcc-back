@@ -16,3 +16,4 @@ pyhanko>=0.18.0
 asn1crypto>=1.5.1
 pypdf>=3.8.1
 endesive>=2.14.0
+gunicorn==21.2.0
