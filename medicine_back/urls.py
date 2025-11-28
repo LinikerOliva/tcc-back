@@ -2,9 +2,12 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
+from meu_app.views import common as common_views
 from meu_app.views.auth import password_reset_redirect
 
 urlpatterns = [
+    path('', common_views.index, name='index'),
+    path('health/', common_views.health, name='health'),
     path('reset/<uidb64>/<token>/', password_reset_redirect, name='password_reset_confirm'),
     path('', include('django.contrib.auth.urls')),  # adiciona rotas de reset/confirm padrão
     path('admin/', admin.site.urls),

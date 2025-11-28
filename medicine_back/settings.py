@@ -30,6 +30,13 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
+# Render/Proxy settings
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+CSRF_TRUSTED_ORIGINS = [
+    'https://tcc-back-ktwy.onrender.com',
+    'https://*.onrender.com',
+]
+
 
 # Application definition
 
