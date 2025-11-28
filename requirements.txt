@@ -23,3 +23,7 @@ whitenoise>=6.6.0
 dj-database-url>=2.1.0
 psycopg2-binary>=2.9.9
 django-redis>=5.4.0
+djangorestframework-simplejwt>=5.3.1
+dj-rest-auth>=5.0.2
+django-allauth>=0.54.0
+cairosvg>=2.7.0
