@@ -28,3 +28,4 @@ dj-rest-auth>=5.0.2
 django-allauth>=0.54.0
 cairosvg>=2.7.0
 qrcode>=7.4.2
+whitenoise>=6.6.0
