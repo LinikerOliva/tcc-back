@@ -27,3 +27,4 @@ djangorestframework-simplejwt>=5.3.1
 dj-rest-auth>=5.0.2
 django-allauth>=0.54.0
 cairosvg>=2.7.0
+qr-code>=7.4.2
