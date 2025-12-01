@@ -25,7 +25,7 @@ class UserSerializer(serializers.ModelSerializer):
         return attrs
     
     def create(self, validated_data):
-        validated_data.pop('password_confirm')
+        validated_data.pop('password_confirm', None)
         validated_data['password'] = make_password(validated_data['password'])
         return super().create(validated_data)
     
