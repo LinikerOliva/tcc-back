@@ -3,10 +3,11 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
+from django.core.mail import send_mail
 from django.contrib.auth.forms import PasswordResetForm
 from django.conf import settings
 from django.utils.crypto import get_random_string
-from ..models import User, Paciente, Medico
+from ..models import User, Paciente, Medico, SolicitacaoMedico
 from pathlib import Path
 import os
 from django.shortcuts import redirect
@@ -22,22 +23,55 @@ def register_view(request):
     serializer = UserSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
-        # Cria perfil de médico pendente, caso role seja 'medico'
         role_in = (serializer.validated_data.get('role') or request.data.get('role') or '').lower()
+        # Fluxo por papel
         if role_in == 'medico':
-            crm = request.data.get('crm') or ''
-            Medico.objects.get_or_create(user=user, defaults={'crm': crm, 'status': 'pendente'})
-        token, _ = Token.objects.get_or_create(user=user)
-        return Response({
-            'user': {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'role': user.role
-            },
-            'token': token.key,
-            'message': 'Usuário criado com sucesso!'
-        }, status=status.HTTP_201_CREATED)
+            # Bloqueia login até aprovação
+            user.is_active = False
+            user.save(update_fields=['is_active'])
+            # Cria solicitação vinculada
+            SolicitacaoMedico.objects.get_or_create(user=user, defaults={
+                'status': 'pendente',
+                'crm': request.data.get('crm') or ''
+            })
+            # Envia e-mail de recebimento
+            try:
+                send_mail(
+                    subject='Cadastro de Médico recebido',
+                    message='Recebemos seu cadastro como Médico. Aguarde a aprovação do administrador.',
+                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+                    recipient_list=[user.email],
+                    fail_silently=True,
+                )
+            except Exception:
+                pass
+            return Response({
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'role': user.role,
+                    'is_active': user.is_active,
+                },
+                'message': 'Cadastro de médico recebido. Aguarde aprovação.'
+            }, status=status.HTTP_201_CREATED)
+        else:
+            # Paciente: ativa e cria perfil
+            user.is_active = True
+            user.save(update_fields=['is_active'])
+            Paciente.objects.get_or_create(user=user)
+            token, _ = Token.objects.get_or_create(user=user)
+            return Response({
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'role': user.role,
+                    'is_active': user.is_active,
+                },
+                'token': token.key,
+                'message': 'Usuário criado com sucesso!'
+            }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
@@ -53,6 +87,8 @@ def login_view(request):
         if user_obj:
             user = authenticate(username=user_obj.username, password=password)
     if user:
+        if not getattr(user, 'is_active', True):
+            return Response({'error': 'Cadastro em análise. Aguarde aprovação.'}, status=status.HTTP_403_FORBIDDEN)
         if getattr(user, 'role', None) == 'paciente':
             Paciente.objects.get_or_create(user=user)
         token, _ = Token.objects.get_or_create(user=user)
@@ -101,6 +137,8 @@ def google_login_view(request):
 
     user = User.objects.filter(email__iexact=email).first()
     if user:
+        if not getattr(user, 'is_active', True):
+            return Response({'error': 'Cadastro em análise. Aguarde aprovação.'}, status=status.HTTP_403_FORBIDDEN)
         if getattr(user, 'role', None) == 'paciente':
             Paciente.objects.get_or_create(user=user)
         token, _ = Token.objects.get_or_create(user=user)
@@ -145,21 +183,47 @@ def google_login_view(request):
     except Exception as e:
         return Response({'error': 'Falha ao criar usuário', 'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     if role == 'paciente':
+        user.is_active = True
+        user.save(update_fields=['is_active'])
         Paciente.objects.get_or_create(user=user)
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+            },
+            'token': token.key,
+            'message': 'Conta criada e login via Google realizado com sucesso!'
+        }, status=status.HTTP_201_CREATED)
     elif role == 'medico':
-        crm = request.data.get('crm') or ''
-        Medico.objects.get_or_create(user=user, defaults={'crm': crm, 'status': 'pendente'})
-    token, _ = Token.objects.get_or_create(user=user)
-    return Response({
-        'user': {
-            'id': user.id,
-            'username': user.username,
-            'email': user.email,
-            'role': user.role
-        },
-        'token': token.key,
-        'message': 'Conta criada e login via Google realizado com sucesso!'
-    }, status=status.HTTP_201_CREATED)
+        user.is_active = False
+        user.save(update_fields=['is_active'])
+        SolicitacaoMedico.objects.get_or_create(user=user, defaults={
+            'status': 'pendente',
+            'crm': request.data.get('crm') or ''
+        })
+        try:
+            send_mail(
+                subject='Cadastro de Médico recebido',
+                message='Recebemos seu cadastro como Médico. Aguarde a aprovação do administrador.',
+                from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
+        except Exception:
+            pass
+        return Response({
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'is_active': user.is_active,
+            },
+            'message': 'Cadastro de médico recebido. Aguarde aprovação.'
+        }, status=status.HTTP_201_CREATED)
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
