@@ -4,6 +4,8 @@ from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from django.utils import timezone
+from django.core.mail import send_mail
+from django.conf import settings
 from ..models import Medico, Especialidade, SolicitacaoMedico
 from ..serializers import SolicitacaoMedicoSerializer
 
@@ -140,17 +142,49 @@ class SolicitacaoMedicoModelViewSet(viewsets.ModelViewSet):
         except SolicitacaoMedico.DoesNotExist:
             return Response({'detail': 'Não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
+        # 1. Atualiza status da solicitação
         obj.status = 'approved'
         obj.approved_by = request.user
         obj.approved_at = timezone.now()
-        # limpar rejeição anterior, se houver
         obj.rejected_by = None
         obj.rejected_at = None
         obj.rejection_reason = ''
         obj.save(update_fields=['status', 'approved_by', 'approved_at', 'rejected_by', 'rejected_at', 'rejection_reason'])
 
+        # 2. Ativa o usuário e garante role
+        user = obj.user
+        user.is_active = True
+        user.role = 'medico'
+        user.save(update_fields=['is_active', 'role'])
+
+        # 3. Cria perfil de médico
+        Medico.objects.get_or_create(
+            user=user,
+            defaults={
+                'crm': obj.crm or '',
+                'status': 'aprovado'
+            }
+        )
+
+        # 4. Envia e-mail de boas-vindas (não interrompe em caso de erro)
+        try:
+            send_mail(
+                subject='Cadastro Aprovado - Trathea',
+                message='Parabéns! Seu cadastro foi aprovado. Acesse agora: https://trathea-front.vercel.app',
+                from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
+        except Exception:
+            pass
+
         data = self.get_serializer(obj).data
+        data['user'] = {'id': str(user.id), 'email': user.email, 'role': user.role, 'is_active': user.is_active}
         return Response(data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post', 'patch'], url_path='aprovar')
+    def aprovar(self, request, pk=None, *args, **kwargs):
+        return self.approve(request, pk, *args, **kwargs)
 
     @action(detail=True, methods=['post'], url_path='reject')
     def reject(self, request, pk=None, *args, **kwargs):
