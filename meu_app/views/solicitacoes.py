@@ -143,7 +143,7 @@ class SolicitacaoMedicoModelViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'Não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
         # 1. Atualiza status da solicitação
-        obj.status = 'approved'
+        obj.status = 'aprovada'
         obj.approved_by = request.user
         obj.approved_at = timezone.now()
         obj.rejected_by = None

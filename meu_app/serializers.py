@@ -29,7 +29,7 @@ class UserSerializer(serializers.ModelSerializer):
         if not v:
             return value
         if User.objects.filter(email__iexact=v).exists():
-            raise serializers.ValidationError('Este endereço de e-mail já está em uso.')
+            raise serializers.ValidationError('Este e-mail já está cadastrado.')
         return v
     
     def create(self, validated_data):

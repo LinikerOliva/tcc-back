@@ -33,6 +33,27 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    def update(self, request, *args, **kwargs):
+        obj = self.get_object()
+        requester = request.user
+        if not (self._is_admin(requester) or str(obj.id) == str(requester.id)):
+            return Response({'detail': 'Permissão negada'}, status=status.HTTP_403_FORBIDDEN)
+        partial = True
+        serializer = self.get_serializer(obj, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def partial_update(self, request, *args, **kwargs):
+        obj = self.get_object()
+        requester = request.user
+        if not (self._is_admin(requester) or str(obj.id) == str(requester.id)):
+            return Response({'detail': 'Permissão negada'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = self.get_serializer(obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     @action(detail=False, methods=['post'], url_path='remover-em-massa')
     def remover_em_massa(self, request):
         user = request.user
