@@ -145,16 +145,36 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'meu_app.User'
 
 
-# CORS Configuration
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # Vite dev server
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",  # Caso use outra porta
-]
+# CORS / CSRF Configuration
+def _env_list(key: str, default=None):
+    val = os.getenv(key, '')
+    if not val:
+        return default or []
+    return [x.strip() for x in val.split(',') if x.strip()]
 
+# URL do frontend (Vercel)
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://seu-projeto-trathea.vercel.app')
+
+# Lista de origens permitidas via env (CSV)
+ALLOWED_ORIGINS = _env_list('ALLOWED_ORIGINS', [])
+if FRONTEND_URL:
+    ALLOWED_ORIGINS.append(FRONTEND_URL)
+if DEBUG:
+    ALLOWED_ORIGINS.extend([
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+    ])
+CORS_ALLOWED_ORIGINS = list(dict.fromkeys(ALLOWED_ORIGINS))
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = bool(DEBUG)
 
-CORS_ALLOW_ALL_ORIGINS = True  # Apenas para desenvolvimento
+# CSRF — inclui Render e o domínio do frontend
+CSRF_TRUSTED_ORIGINS = list(dict.fromkeys([
+    'https://tcc-back-ktwy.onrender.com',
+    'https://*.onrender.com',
+    FRONTEND_URL,
+]))
 
 # REST Framework Configuration
 REST_FRAMEWORK = {
