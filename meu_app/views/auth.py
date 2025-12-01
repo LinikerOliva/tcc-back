@@ -292,10 +292,11 @@ def ensure_password_reset_templates():
     reg_dir = base_dir / 'meu_app' / 'templates' / 'registration'
     reg_dir.mkdir(parents=True, exist_ok=True)
     subject_path = reg_dir / 'password_reset_subject.txt'
-    email_path = reg_dir / 'password_reset_email.html'
+    email_html_path = reg_dir / 'password_reset_email.html'
+    email_txt_path = reg_dir / 'password_reset_email.txt'
 
     subject_content = "Redefinição de senha - Minha Plataforma"
-    email_content = """<!doctype html>
+    email_html_content = """<!doctype html>
 <html lang=\"pt-BR\">
   <head>
     <meta charset=\"utf-8\" />
@@ -331,8 +332,12 @@ def ensure_password_reset_templates():
     try:
         if not subject_path.exists() or subject_path.read_text(encoding="utf-8") != subject_content:
             subject_path.write_text(subject_content, encoding="utf-8")
-        if not email_path.exists() or email_path.read_text(encoding="utf-8") != email_content:
-            email_path.write_text(email_content, encoding="utf-8")
+        if not email_html_path.exists() or email_html_path.read_text(encoding="utf-8") != email_html_content:
+            email_html_path.write_text(email_html_content, encoding="utf-8")
+        # template texto simples usado pelo PasswordResetForm
+        email_txt_content = "Para redefinir sua senha, acesse: {{ frontend_base }}/redefinir-senha/{{ uid }}/{{ token }}\nSe você não solicitou, ignore este e-mail."
+        if not email_txt_path.exists() or email_txt_path.read_text(encoding="utf-8") != email_txt_content:
+            email_txt_path.write_text(email_txt_content, encoding="utf-8")
     except Exception as e:
         print(f"DEBUG: não foi possível garantir templates: {e}")
 
@@ -355,7 +360,7 @@ def print_last_email_to_console_if_debug():
 
 # Remover decoradores indevidos do redirect e manter como view Django simples
 def password_reset_redirect(request, uidb64, token):
-    frontend_base = (getattr(settings, 'FRONTEND_BASE_URL', None) or getattr(settings, 'FRONTEND_URL', None) or '').strip() or 'https://seu-projeto-trathea.vercel.app'
+    frontend_base = (getattr(settings, 'FRONTEND_BASE_URL', None) or getattr(settings, 'FRONTEND_URL', None) or '').strip() or 'https://trathea-front.vercel.app'
     frontend_base = frontend_base.rstrip('/')
     return redirect(f"{frontend_base}/redefinir-senha/{uidb64}/{token}")
 
@@ -370,7 +375,7 @@ def password_reset_api(request):
     from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
 
     # Bases para links no email (evita NameError)
-    frontend_base = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:5175').rstrip('/')
+    frontend_base = (getattr(settings, 'FRONTEND_BASE_URL', None) or getattr(settings, 'FRONTEND_URL', None) or 'https://trathea-front.vercel.app').rstrip('/')
     backend_base = getattr(settings, 'BACKEND_BASE_URL', 'http://127.0.0.1:8000').rstrip('/')
 
     # Garante templates atualizados/criados

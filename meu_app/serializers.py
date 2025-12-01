@@ -23,6 +23,14 @@ class UserSerializer(serializers.ModelSerializer):
             if password != password_confirm:
                 raise serializers.ValidationError("As senhas não coincidem.")
         return attrs
+
+    def validate_email(self, value):
+        v = (value or '').strip()
+        if not v:
+            return value
+        if User.objects.filter(email__iexact=v).exists():
+            raise serializers.ValidationError('Este endereço de e-mail já está em uso.')
+        return v
     
     def create(self, validated_data):
         validated_data.pop('password_confirm', None)
