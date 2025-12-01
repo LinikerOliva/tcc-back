@@ -23,7 +23,7 @@ def register_view(request):
     serializer = UserSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
-        role_in = (serializer.validated_data.get('role') or request.data.get('role') or '').lower()
+        role_in = (serializer.validated_data.get('role') or request.data.get('role') or request.data.get('tipo') or request.data.get('desired_role') or '').lower()
         # Fluxo por papel
         if role_in == 'medico':
             # Bloqueia login até aprovação
