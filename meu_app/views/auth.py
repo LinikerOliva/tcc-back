@@ -355,7 +355,8 @@ def print_last_email_to_console_if_debug():
 
 # Remover decoradores indevidos do redirect e manter como view Django simples
 def password_reset_redirect(request, uidb64, token):
-    frontend_base = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:5174').rstrip('/')
+    frontend_base = (getattr(settings, 'FRONTEND_BASE_URL', None) or getattr(settings, 'FRONTEND_URL', None) or '').strip() or 'https://seu-projeto-trathea.vercel.app'
+    frontend_base = frontend_base.rstrip('/')
     return redirect(f"{frontend_base}/redefinir-senha/{uidb64}/{token}")
 
 @api_view(['POST'])
