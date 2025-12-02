@@ -36,6 +36,7 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 CSRF_TRUSTED_ORIGINS = [
     'https://tcc-back-ktwy.onrender.com',
     'https://*.onrender.com',
+    'https://medicine-front-six.vercel.app',
 ]
 
 
@@ -160,7 +161,7 @@ def _env_list(key: str, default=None):
     return [x.strip() for x in val.split(',') if x.strip()]
 
 # URL do frontend (Vercel)
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://seu-projeto-trathea.vercel.app')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://medicine-front-six.vercel.app').rstrip('/')
 
 # Lista de origens permitidas via env (CSV)
 ALLOWED_ORIGINS = _env_list('ALLOWED_ORIGINS', [])
